@@ -5,7 +5,6 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 import io
 import re
-import os
 
 # Page Configuration
 st.set_page_config(
@@ -29,50 +28,32 @@ st.markdown("""
         color: #555555;
         margin-bottom: 1.5rem;
     }
-    .kpi-card {
-        background: #ffffff;
+    .upload-box {
+        border: 2px dashed #1F4E79;
         border-radius: 10px;
-        padding: 1.2rem;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        padding: 2.5rem;
         text-align: center;
+        background-color: #F8FAFC;
+        margin-bottom: 1.5rem;
     }
-    .badge-blue {
-        background-color: #D1ECF1;
-        color: #0C5460;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
+    .feature-card {
+        background: #ffffff;
+        border-radius: 8px;
+        padding: 1.2rem;
+        border: 1px solid #E2E8F0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        height: 100%;
     }
-    .badge-yellow {
-        background-color: #FFF3CD;
-        color: #856404;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .badge-red {
-        background-color: #F8D7DA;
-        color: #721C24;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
-    }
-    .badge-green {
-        background-color: #E8F8F5;
-        color: #155724;
-        padding: 4px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 0.85rem;
+    .feature-title {
+        font-weight: 700;
+        color: #1F4E79;
+        font-size: 1.05rem;
+        margin-bottom: 0.5rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Default Vendor-to-Category Canonical Mapping Base
+# Canonical Vendor-to-Category Mapping Base
 DEFAULT_VENDOR_CATEGORY_MAP = {
     # Credit Card Accounts
     "Amex CC": "Amex CC",
@@ -340,7 +321,7 @@ def audit_and_fix_workbook(wb, vendor_rules):
         if is_cc_payment:
             cell_name.value = target_cc_name
             status = "CC VENDOR UPDATED"
-            note = f"Vendor Name updated to '{target_cc_name}'"
+            note = f"Vendor Name set to '{target_cc_name}'"
             row_fill = fill_cc_updated
             row_font = font_info
             cc_fixed += 1
@@ -506,69 +487,53 @@ def audit_and_fix_workbook(wb, vendor_rules):
 
 
 # -----------------------------------------------------------------------------
-# STREAMLIT UI
+# STREAMLIT UI (CLEAN LANDING PAGE BY DEFAULT)
 # -----------------------------------------------------------------------------
 st.markdown('<div class="main-header">📊 General Ledger Auditor & Auto-Fixer</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Automated credit card vendor population, historical vendor-to-category reconciliation, and full visual row audit.</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Upload your monthly QuickBooks or General Ledger Excel file to automatically audit categorizations, fix missing credit card vendor names, and download a color-coded compliance report.</div>', unsafe_allow_html=True)
 
 # Sidebar
-st.sidebar.header("⚙️ Configuration & Options")
+st.sidebar.header("⚙️ Controls")
 st.sidebar.markdown("---")
 
-uploaded_file = st.sidebar.file_uploader(
-    "Upload General Ledger Excel File (.xlsx)",
-    type=["xlsx", "xls"],
-    help="Upload your QuickBooks or standard General Ledger export file."
-)
-
-use_sample = False
-if not uploaded_file:
-    st.sidebar.info("💡 No file uploaded yet. You can test with the local workspace ledger:")
-    if st.sidebar.button("📂 Load Workspace Ledger File", use_container_width=True):
-        use_sample = True
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🎨 Color Legend Guide")
+st.sidebar.subheader("🎨 Audit Color Legend")
 st.sidebar.markdown("""
-- 🟦 **Blue**: Credit Card Payment with Vendor Name Auto-Populated.
-- 🟨 **Yellow**: Category Mismatch vs Past History.
-- 🟥 **Red**: Uncategorized Income / Expense.
-- 🟩 **Green**: Fully Matched & Verified Entry.
+- 🟦 **Blue**: Credit Card Payment (Vendor Name Populated)
+- 🟨 **Yellow**: Category Mismatch vs History
+- 🟥 **Red**: Uncategorized Income / Expense
+- 🟩 **Green**: Verified & Matched Entry
 """)
 
-# Main Execution Flow
-file_bytes = None
-file_name = "General_Ledger.xlsx"
+uploaded_file = st.file_uploader(
+    "📁 Upload General Ledger Excel File (.xlsx or .xls)",
+    type=["xlsx", "xls"],
+    help="Select and upload any General Ledger workbook to begin the automated audit."
+)
 
-if uploaded_file:
-    file_bytes = uploaded_file.read()
-    file_name = uploaded_file.name
-elif use_sample or os.path.exists("VIRTUSSOLUTIONS LLC_General Ledger (1).xlsx"):
-    sample_path = "VIRTUSSOLUTIONS LLC_General Ledger (1).xlsx"
-    if os.path.exists(sample_path):
-        with open(sample_path, "rb") as f:
-            file_bytes = f.read()
-        file_name = sample_path
-
-if file_bytes is not None:
+if uploaded_file is not None:
     try:
-        in_wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
-        out_wb, summary = audit_and_fix_workbook(in_wb, DEFAULT_VENDOR_CATEGORY_MAP)
-        
-        # Save output buffer for download
-        out_buffer = io.BytesIO()
-        out_wb.save(out_buffer)
-        out_buffer.seek(0)
+        with st.spinner("🔍 Auditing 100% of rows and verifying vendor categories..."):
+            file_bytes = uploaded_file.read()
+            file_name = uploaded_file.name
+            
+            in_wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
+            out_wb, summary = audit_and_fix_workbook(in_wb, DEFAULT_VENDOR_CATEGORY_MAP)
+            
+            out_buffer = io.BytesIO()
+            out_wb.save(out_buffer)
+            out_buffer.seek(0)
+            
+        st.success(f"✅ Audit completed successfully for: **{file_name}**")
         
         # KPI Row
-        st.markdown("### 📈 Audit Metrics Overview")
+        st.markdown("### 📈 Audit Summary Overview")
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            st.metric("Total Transactions", summary["total_rows"])
+            st.metric("Total Rows Evaluated", summary["total_rows"])
         with col2:
             st.metric("CC Payments Fixed", summary["cc_fixed"], delta=f"{summary['cc_fixed']} updated", delta_color="normal")
         with col3:
-            st.metric("Category Inconsistencies", summary["mismatch_count"], delta=f"{summary['mismatch_count']} to review", delta_color="inverse")
+            st.metric("Category Mismatches", summary["mismatch_count"], delta=f"{summary['mismatch_count']} to review", delta_color="inverse")
         with col4:
             st.metric("Uncategorized Items", summary["uncat_count"], delta=f"{summary['uncat_count']} need action", delta_color="inverse")
         with col5:
@@ -577,10 +542,10 @@ if file_bytes is not None:
         st.markdown("---")
         
         # Download Section
-        st.markdown("### 📥 Download Audited Excel Workbook")
         d_col1, d_col2 = st.columns([3, 1])
         with d_col1:
-            st.success("✅ Audit complete! 100% of rows have been evaluated, categorized, and styled.")
+            st.markdown("#### 📥 Download Your Highlighted & Audited Excel File")
+            st.caption("Contains the new 'Audit & Discrepancies' tab and color-coded General Ledger tab.")
         with d_col2:
             st.download_button(
                 label="⬇️ Download Audited Excel",
@@ -594,16 +559,14 @@ if file_bytes is not None:
         
         # Interactive Discrepancies Table
         st.markdown("### 🔍 Discrepancies & Flagged Entries Inspector")
-        
         df_discrepancies = pd.DataFrame(summary["discrepancies"])
         
         if not df_discrepancies.empty:
-            # Filters
             f_col1, f_col2 = st.columns([2, 2])
             with f_col1:
                 status_filter = st.selectbox("Filter by Status", ["All"] + list(df_discrepancies["Status"].unique()))
             with f_col2:
-                search_query = st.text_input("Search by Vendor, Description or Account", "")
+                search_query = st.text_input("Search by Vendor, Description, or Account", "")
                 
             filtered_df = df_discrepancies.copy()
             if status_filter != "All":
@@ -615,22 +578,44 @@ if file_bytes is not None:
                     filtered_df["Account"].astype(str).str.contains(search_query, case=False, na=False)
                 ]
                 
-            # Render Table
             st.dataframe(
                 filtered_df[["Row", "Date", "Account", "Type", "Vendor", "Amount", "Status", "Issue", "Action"]].style.format({"Amount": "${:,.2f}"}),
                 use_container_width=True,
                 height=350
             )
         else:
-            st.info("No discrepancies found! All entries match historical rules.")
+            st.info("🎉 No discrepancies found! All entries match historical rules.")
             
-        # Rules Explorer
         with st.expander("📚 View Historical Vendor $\\rightarrow$ Category Mapping Rules"):
-            st.write("These standard categorization rules are used to detect mismatches:")
             rules_df = pd.DataFrame(list(DEFAULT_VENDOR_CATEGORY_MAP.items()), columns=["Vendor / Merchant", "Expected Category / Account"])
             st.dataframe(rules_df, use_container_width=True, height=250)
 
     except Exception as e:
         st.error(f"Error processing workbook: {str(e)}")
 else:
-    st.info("👈 Please upload a General Ledger Excel file using the sidebar or click 'Load Workspace Ledger File'.")
+    # Fresh Landing Page Explanation
+    st.info("👆 Please upload a General Ledger `.xlsx` or `.xls` file above to start.")
+    
+    st.markdown("### 🚀 What this tool does automatically:")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-title">💳 1. Credit Card Vendor Names</div>
+            <p>Automatically detects credit card payments and populates the missing Vendor Name with the Credit Card name (e.g. <code>Amex CC</code> or <code>BOA CC</code>).</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with c2:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-title">🔄 2. Historical Category Matching</div>
+            <p>Cross-references vendors against historical categories and flags inconsistencies (e.g. DoorDash under Entertainment vs Meals with clients).</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with c3:
+        st.markdown("""
+        <div class="feature-card">
+            <div class="feature-title">🎨 3. 100% Color Highlighting</div>
+            <p>Generates an audited workbook with an executive Discrepancies dashboard, row-level color coding, and direct export to Excel.</p>
+        </div>
+        """, unsafe_allow_html=True)
