@@ -7,12 +7,25 @@ import sys
 import collections
 
 # -----------------------------------------------------------------------------
-# CATEGORY COMPATIBILITY & EQUIVALENCE GROUPS
+# CHART OF ACCOUNTS TAXONOMY & EQUIVALENCE CYCLES
 # -----------------------------------------------------------------------------
 
-EQUIVALENCE_GROUPS = [
-    # 1. Client Revenue Cycle (A/R, Services, Invoicing, Collections)
-    {"accounts receivable (a/r)", "services", "accounts receivable", "services income", "income", "sales", "revenue"},
+CHART_OF_ACCOUNTS_TAXONOMY = {
+    "Meals & Entertainment": ["Entertainment", "Meals with clients"],
+    "Office expenses": ["Office supplies", "Small tools & equipment", "Software & apps"],
+    "Travel": ["Airfare", "Auto Expenses", "Hotels", "Taxis or shared rides"],
+    "Utilities": ["Disposal & waste fees", "Phone service", "Other", "Electricity", "Water & sewer"],
+    "Vehicle expenses": ["Parking & tolls", "Vehicle registration"],
+    "General business expenses": ["Bank fees & service charges", "Memberships & subscriptions"],
+    "Payroll expenses": ["Payroll Processing Fee", "Payroll taxes"],
+    "Rent": ["Building & land rent"],
+    "Payroll wages and tax to pay": ["Payroll tax to pay"],
+    "Shareholders' equity": ["Distributions"]
+}
+
+EQUIVALENCE_CYCLES = [
+    # 1. Client Revenue Cycle (A/R, Services, Revenue, Payments to deposit)
+    {"accounts receivable (a/r)", "services", "accounts receivable", "services income", "income", "sales", "revenue", "payments to deposit"},
     
     # 2. Subcontractor / Direct Vendor Cycle (A/P, COGS - Vendor, Consulting Fees)
     {"accounts payable (a/p)", "cogs - vendor", "consulting fees", "accounts payable", "cost of goods sold", "vendor cogs", "cogs"},
@@ -20,31 +33,31 @@ EQUIVALENCE_GROUPS = [
     # 3. Owner Distributions / Draws
     {"owners distribution", "shareholders' equity:distributions", "distributions", "shareholders' equity", "owner's distribution"},
     
-    # 4. Payroll Processing
-    {"payroll expenses:payroll processing fee", "payroll processing fee", "payroll processing fees"},
+    # 4. Direct Labor & Wages
+    {"payroll wages payable", "salaries & wages", "cogs - vendor:salaries & wages", "payroll wages"},
     
     # 5. Payroll Taxes
     {"payroll wages and tax to pay:payroll tax to pay", "payroll tax to pay", "payroll expenses:payroll taxes", "payroll taxes"},
     
-    # 6. Payroll Wages & Salaries
-    {"payroll wages payable", "salaries & wages", "cogs - vendor:salaries & wages", "payroll wages"},
+    # 6. Payroll Processing Fees
+    {"payroll expenses:payroll processing fee", "payroll processing fee", "payroll processing fees"},
     
     # 7. Rent & Facilities
     {"rent:building & land rent", "building & land rent", "rent"},
 ]
 
-def normalize_cat(cat):
-    return str(cat).strip().lower()
+def normalize_account_str(acc):
+    return str(acc).strip().lower()
 
-def are_categories_compatible(cat1, cat2):
-    """Check if two category strings are legitimate accounting counterparts or sub-accounts."""
-    c1 = normalize_cat(cat1)
-    c2 = normalize_cat(cat2)
+def are_categories_aligned(cat1, cat2):
+    """Check if categories are legitimate accounting counterparts or hierarchical parent:child matches."""
+    c1 = normalize_account_str(cat1)
+    c2 = normalize_account_str(cat2)
     
     if c1 == c2:
         return True
         
-    # Sub-account matching (e.g. "phone service" == "utilities:phone service")
+    # Parent-child sub-account matching
     if c1.endswith(":" + c2) or c2.endswith(":" + c1):
         return True
     if ":" in c1 and ":" not in c2 and c1.split(":")[-1] == c2:
@@ -52,16 +65,16 @@ def are_categories_compatible(cat1, cat2):
     if ":" in c2 and ":" not in c1 and c2.split(":")[-1] == c1:
         return True
         
-    # Equivalence groups (e.g. Services vs Accounts Receivable (A/R))
-    for grp in EQUIVALENCE_GROUPS:
-        c1_in = any(c1 == m or c1.endswith(":" + m) or m.endswith(":" + c1) for m in grp)
-        c2_in = any(c2 == m or c2.endswith(":" + m) or m.endswith(":" + c2) for m in grp)
+    # Business cycle equivalence groups
+    for cycle in EQUIVALENCE_CYCLES:
+        c1_in = any(c1 == m or c1.endswith(":" + m) or m.endswith(":" + c1) for m in cycle)
+        c2_in = any(c2 == m or c2.endswith(":" + m) or m.endswith(":" + c2) for m in cycle)
         if c1_in and c2_in:
             return True
             
     return False
 
-def clean_vendor(name, desc):
+def clean_vendor_id(name, desc):
     """Normalize and extract merchant/vendor identity from Name or Description."""
     text = str(name).strip() if name and str(name).strip() and str(name).strip() != "None" else (str(desc).strip() if desc else "")
     if not text:
@@ -210,7 +223,7 @@ def extract_historical_rules(hist_filepath):
             continue
             
         category = c_split if c_dist in ["Bank of America", "Amex CC", "BOA CC"] else c_dist
-        vendor = clean_vendor(c_name, c_desc)
+        vendor = clean_vendor_id(c_name, c_desc)
         
         if vendor and vendor != "Unknown" and category and "Uncategorized" not in category:
             learned[vendor][category] += 1
@@ -285,7 +298,7 @@ def audit_and_fix_general_ledger(curr_filepath, output_filepath, historical_rule
         str_split = str(c_split).strip() if c_split else ""
         amt_val = float(c_amt) if c_amt is not None else 0.0
         
-        # 1. Credit card payment vendor fix
+        # 1. Credit Card Payment Vendor Fix
         is_cc_payment = False
         target_cc_name = ""
         
@@ -315,7 +328,8 @@ def audit_and_fix_general_ledger(curr_filepath, output_filepath, historical_rule
                 "action": f"Set Vendor Name to '{target_cc_name}'"
             })
         else:
-            vendor_key = clean_vendor(str_name, str_desc)
+            # 2. Category Verification against Chart of Accounts and History
+            vendor_key = clean_vendor_id(str_name, str_desc)
             
             if "Uncategorized" in str_dist or "Uncategorized" in str_split:
                 status = "UNCATEGORIZED"
@@ -334,8 +348,8 @@ def audit_and_fix_general_ledger(curr_filepath, output_filepath, historical_rule
                 expected_category = rule_info["primary_category"]
                 curr_category = str_split if str_dist in ["Bank of America", "Amex CC", "BOA CC"] else str_dist
                 
-                # Check compatibility with parent accounts and equivalence groups
-                if not are_categories_compatible(curr_category, expected_category):
+                # Check compatibility with parent accounts and equivalence cycles
+                if not are_categories_aligned(curr_category, expected_category):
                     status = "CATEGORY MISMATCH"
                     note = f"Expected '{expected_category}' based on historical data, found '{curr_category}'."
                     row_fill = fill_mismatch
