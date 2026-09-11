@@ -26,8 +26,15 @@ venv/
 .venv/
 ENV/
 
+# Secrets & Environment Variables (PROTECTED)
+.env
+.env.*
+.streamlit/
+secrets.toml
+
 # OS / IDE
 .DS_Store
 .vscode/
 .idea/
 ~$*.xlsx
+.~*
