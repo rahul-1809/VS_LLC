@@ -50,8 +50,59 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# CORE AUDIT & MAPPING FUNCTIONS
+# CATEGORY COMPATIBILITY & EQUIVALENCE GROUPS
 # -----------------------------------------------------------------------------
+
+EQUIVALENCE_GROUPS = [
+    # 1. Client Revenue Cycle (A/R, Services, Invoicing, Collections)
+    {"accounts receivable (a/r)", "services", "accounts receivable", "services income", "income", "sales", "revenue"},
+    
+    # 2. Subcontractor / Direct Vendor Cycle (A/P, COGS - Vendor, Consulting Fees)
+    {"accounts payable (a/p)", "cogs - vendor", "consulting fees", "accounts payable", "cost of goods sold", "vendor cogs", "cogs"},
+    
+    # 3. Owner Distributions / Draws
+    {"owners distribution", "shareholders' equity:distributions", "distributions", "shareholders' equity", "owner's distribution"},
+    
+    # 4. Payroll Processing
+    {"payroll expenses:payroll processing fee", "payroll processing fee", "payroll processing fees"},
+    
+    # 5. Payroll Taxes
+    {"payroll wages and tax to pay:payroll tax to pay", "payroll tax to pay", "payroll expenses:payroll taxes", "payroll taxes"},
+    
+    # 6. Payroll Wages & Salaries
+    {"payroll wages payable", "salaries & wages", "cogs - vendor:salaries & wages", "payroll wages"},
+    
+    # 7. Rent & Facilities
+    {"rent:building & land rent", "building & land rent", "rent"},
+]
+
+def normalize_cat(cat):
+    return str(cat).strip().lower()
+
+def are_categories_compatible(cat1, cat2):
+    """Check if two category strings are legitimate accounting counterparts or sub-accounts."""
+    c1 = normalize_cat(cat1)
+    c2 = normalize_cat(cat2)
+    
+    if c1 == c2:
+        return True
+        
+    # Sub-account matching (e.g. "phone service" == "utilities:phone service")
+    if c1.endswith(":" + c2) or c2.endswith(":" + c1):
+        return True
+    if ":" in c1 and ":" not in c2 and c1.split(":")[-1] == c2:
+        return True
+    if ":" in c2 and ":" not in c1 and c2.split(":")[-1] == c1:
+        return True
+        
+    # Equivalence groups (e.g. Services vs Accounts Receivable (A/R))
+    for grp in EQUIVALENCE_GROUPS:
+        c1_in = any(c1 == m or c1.endswith(":" + m) or m.endswith(":" + c1) for m in grp)
+        c2_in = any(c2 == m or c2.endswith(":" + m) or m.endswith(":" + c2) for m in grp)
+        if c1_in and c2_in:
+            return True
+            
+    return False
 
 def clean_vendor(name, desc):
     """Normalize and extract merchant/vendor identity from Name or Description."""
@@ -185,7 +236,7 @@ def clean_vendor(name, desc):
     return clean[:35]
 
 def extract_historical_rules(hist_wb):
-    """Dynamically learn all Vendor -> Category rules from the uploaded historical ledger."""
+    """Dynamically learn rules from historical workbook."""
     sheet = hist_wb.active
     rows = list(sheet.iter_rows(values_only=True))
     learned = collections.defaultdict(collections.Counter)
@@ -240,7 +291,6 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
         bottom=Side(style='thin', color='D9D9D9')
     )
     
-    # Set Audit Headers at Row 5, Col 11 and 12
     cell_k5 = sheet.cell(row=5, column=11, value="Audit Status")
     cell_l5 = sheet.cell(row=5, column=12, value="Audit Details & Suggested Category")
     for cell in [cell_k5, cell_l5]:
@@ -254,7 +304,6 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
     uncat_count = 0
     matched_count = 0
     
-    # Process 100% of transaction rows
     for r in range(6, sheet.max_row + 1):
         c_dist = sheet.cell(row=r, column=2).value
         c_date = sheet.cell(row=r, column=3).value
@@ -276,9 +325,7 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
         str_split = str(c_split).strip() if c_split else ""
         amt_val = float(c_amt) if c_amt is not None else 0.0
         
-        # -----------------------------------------------------------------
-        # REQUIREMENT 1: Credit Card Payment Vendor Name Auto-Population
-        # -----------------------------------------------------------------
+        # 1. Credit card payment vendor fix
         is_cc_payment = False
         target_cc_name = ""
         
@@ -308,12 +355,9 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
                 "Action": f"Set Vendor Name to '{target_cc_name}'"
             })
         else:
-            # -----------------------------------------------------------------
-            # REQUIREMENT 2: Vendor-Category Matching Based on Past History
-            # -----------------------------------------------------------------
+            # 2. Historical Category Matching
             vendor_key = clean_vendor(str_name, str_desc)
             
-            # Check Uncategorized Entries
             if "Uncategorized" in str_dist or "Uncategorized" in str_split:
                 status = "UNCATEGORIZED"
                 note = "Uncategorized transaction requires reconciliation / invoice mapping."
@@ -331,16 +375,10 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
                 expected_category = rule_info["primary_category"]
                 curr_category = str_split if str_dist in ["Bank of America", "Amex CC", "BOA CC"] else str_dist
                 
-                # Check category compatibility
-                is_match = False
-                if expected_category.lower() in curr_category.lower() or curr_category.lower() in expected_category.lower():
-                    is_match = True
-                if curr_category in ["Accounts Receivable (A/R)", "Accounts Payable (A/P)"]:
-                    is_match = True
-                    
-                if not is_match:
+                # Check compatibility with parent accounts and equivalence groups
+                if not are_categories_compatible(curr_category, expected_category):
                     status = "CATEGORY MISMATCH"
-                    note = f"Expected '{expected_category}' based on historical data ({rule_info['occurrences']} past matches), found '{curr_category}'."
+                    note = f"Expected '{expected_category}' based on historical data, found '{curr_category}'."
                     row_fill = fill_mismatch
                     row_font = font_warning
                     mismatch_count += 1
@@ -357,24 +395,20 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
                     row_font = font_success
                     matched_count += 1
             else:
-                # Standard verified transaction
                 status = "MATCHED"
                 note = "Standard ledger entry"
                 row_fill = fill_matched
                 row_font = font_success
                 matched_count += 1
                 
-        # Write columns K & L
         cell_k = sheet.cell(row=r, column=11, value=status)
         cell_l = sheet.cell(row=r, column=12, value=note)
         cell_k.font = row_font
         cell_l.font = font_regular
         
-        # Color row
         for col_idx in range(2, 13):
             sheet.cell(row=r, column=col_idx).fill = row_fill
             
-    # Add / Update Audit Tab
     if "Audit & Discrepancies" in curr_wb.sheetnames:
         del curr_wb["Audit & Discrepancies"]
     audit_ws = curr_wb.create_sheet(title="Audit & Discrepancies", index=0)
@@ -385,7 +419,6 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
     audit_ws["A2"] = f"Total Transactions Audited: {len(audit_results) + matched_count} | Issues / Updates: {len(audit_results)}"
     audit_ws["A2"].font = Font(name="Arial", size=10, italic=True, color="595959")
     
-    # KPI headers
     kpis = [
         ("Total Discrepancies & Flags", len(audit_results), "FFF3CD", "856404"),
         ("CC Vendor Payments Fixed", cc_fixed, "D1ECF1", "0C5460"),
@@ -441,7 +474,6 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
         for c in range(1, 11):
             audit_ws.cell(row=idx, column=c).border = thin_border
             
-    # Auto-adjust column widths
     for ws in [audit_ws, sheet]:
         for col in ws.columns:
             max_len = 0
@@ -467,7 +499,7 @@ def audit_and_fix_current_ledger(curr_wb, historical_rules):
 
 
 # -----------------------------------------------------------------------------
-# STREAMLIT UI (TWO-FILE DYNAMIC WORKFLOW)
+# STREAMLIT UI (DUAL UPLOAD)
 # -----------------------------------------------------------------------------
 st.markdown('<div class="main-header">📊 General Ledger Auditor & Auto-Fixer</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Upload your <b>Historical Ledger</b> (ground truth baseline) and your <b>Current Ledger</b> (month to audit & fix). The engine dynamically learns historical vendor patterns, fixes credit card vendor names, and color-codes all discrepancies.</div>', unsafe_allow_html=True)
@@ -506,7 +538,6 @@ with col_curr:
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-# Execution Flow
 if hist_file is not None and curr_file is not None:
     try:
         with st.spinner("🧠 1. Learning historical vendor-category rules from historical ledger..."):
@@ -584,7 +615,6 @@ if hist_file is not None and curr_file is not None:
         else:
             st.info("🎉 No discrepancies found! All transactions match your historical rules.")
             
-        # Learned Rules Accordion
         with st.expander(f"📚 View Dynamically Learned Rules ({len(learned_rules)} Vendors from Historical File)"):
             rules_list = []
             for v_name, v_info in learned_rules.items():
